@@ -242,12 +242,19 @@ def show_user_aust_transfers(user_address, aust_price_df):
     return aust_transfers_sent, aust_transfers_received
 
 
-def mirror_collateral_deposits(user_address):
+def mirror_collateral_deposits(user_address, aust_price_df):
     st.subheader('Mirror aUST Collateral Deposits')
     collateral_deposits_df = fetch_mirror_collateral_deposits()
     user_collateral_deposits_df = filter_mirror_collateral_deposits(
         collateral_deposits_df,
         depositor=user_address
+    )
+    user_collateral_deposits_df = find_closest_aust_pair(aust_price_df, user_collateral_deposits_df)
+    user_collateral_deposits_df = compute_value_of_aust(
+        user_collateral_deposits_df,
+        aust_amount_col='AUST_COLLATERALISED',
+        aust_value_col='AVERAGED_AUST_VALUE',
+        total_ust_value_col='UST_VALUE_COLLATERALISED'
     )
     st.write(user_collateral_deposits_df)
 
@@ -265,12 +272,23 @@ def mirror_collateral_withdrawn(user_address, aust_price_df):
         collateral_withdraws_df,
         withdrawer=user_address
     )
+
     st.write('aUST Collateral Withdraws: ', all_collateral_withdraws)
 
     user_collateral_withdraws_df = \
         all_collateral_withdraws[
             all_collateral_withdraws['POSITION_TYPE'] == 'Withdraw from Borrow'
         ]
+    user_collateral_withdraws_df = find_closest_aust_pair(
+        aust_price_df=aust_price_df,
+        other_df=user_collateral_withdraws_df
+    )
+    user_collateral_withdraws_df = compute_value_of_aust(
+        user_collateral_withdraws_df,
+        aust_amount_col='AUST_COLLATERALISED',
+        aust_value_col='AVERAGED_AUST_VALUE',
+        total_ust_value_col='UST_VALUE_COLLATERALISED'
+    )
 
     total_aust_withdrawn = user_collateral_withdraws_df['AUST_COLLATERALISED'].sum(axis=0)
     st.write('Total aUST Withdrawn: ', total_aust_withdrawn)
@@ -319,6 +337,16 @@ def mirror_collateral_withdrawn(user_address, aust_price_df):
     user_liq_aust_transfer_back_df = filter_aust_transfer_back(
         aust_liquidation_transfer_back_df, owner=user_address
     )
+    user_liq_aust_transfer_back_df = find_closest_aust_pair(
+        aust_price_df,
+        user_liq_aust_transfer_back_df
+    )
+    user_liq_aust_transfer_back_df = compute_value_of_aust(
+        user_liq_aust_transfer_back_df,
+        aust_amount_col='AUST_TRANSFERRED_BACK',
+        aust_value_col='AVERAGED_AUST_VALUE',
+        total_ust_value_col='UST_VALUE_TRANSFERRED',
+    )
     st.write('User\'s aUST transferred back due to liquidation', user_liq_aust_transfer_back_df)
     total_aust_transferred_back = user_liq_aust_transfer_back_df['AUST_TRANSFERRED_BACK'].sum(axis=0)
     st.write('Total aUST transferred back to user from Mirror: ', total_aust_transferred_back)
@@ -331,7 +359,7 @@ user_address = show_user_picker()
 user_deposits_df = show_user_deposits(user_address)
 user_redemptions_df = show_user_redemptions(user_address)
 user_transfers_sent_df, user_transfers_received_df = show_user_aust_transfers(user_address, aust_price_df)
-user_collateral_deposits_df = mirror_collateral_deposits(user_address)
+user_collateral_deposits_df = mirror_collateral_deposits(user_address, aust_price_df)
 user_collateral_withdraws_df, aust_lost_to_fees, aust_liquidated, aust_transferred_back = mirror_collateral_withdrawn(
     user_address, aust_price_df
 )
@@ -384,3 +412,107 @@ st.write('Total Interest Earned: ', interest_earned)
 
 ust_lost = total_ust_paid_in_fees + total_ust_liquidated
 st.write('Total UST lost: ', ust_lost)
+
+
+#######################################################################################################
+
+
+deposit_events_df = user_deposits_df.filter(['BLOCK_ID', 'MINT_AMOUNT_AUST', 'DEPOSIT_AMOUNT_UST'], axis=1)
+deposit_events_df['Source'] = 'Void'
+deposit_events_df['Destination'] = 'Wallet'
+deposit_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Deposit Events: ', deposit_events_df)
+
+
+redemption_events_df = user_redemptions_df.filter(['BLOCK_ID', 'AUST_BURNT', 'UST_REDEEMED'], axis=1)
+redemption_events_df['Source'] = 'Wallet'
+redemption_events_df['Destination'] = 'Void'
+redemption_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Redemption Events: ', redemption_events_df)
+
+
+collateral_deposit_events_df = user_collateral_deposits_df.filter(
+    ['BLOCK_ID', 'AUST_COLLATERALISED', 'UST_VALUE_COLLATERALISED'],
+    axis=1,
+)
+collateral_deposit_events_df['Source'] = 'Wallet'
+collateral_deposit_events_df['Destination'] = 'Mirror'
+collateral_deposit_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Collateral Deposit Events: ', collateral_deposit_events_df)
+
+
+collateral_withdraw_events_df = user_collateral_withdraws_df.filter(
+    ['BLOCK_ID', 'AUST_COLLATERALISED', 'UST_VALUE_COLLATERALISED'],
+    axis=1,
+)
+collateral_withdraw_events_df['Source'] = 'Mirror'
+collateral_withdraw_events_df['Destination'] = 'Wallet'
+collateral_withdraw_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Collateral Withdraw Events: ', collateral_withdraw_events_df)
+
+
+collateral_fee_events_df = aust_lost_to_fees.filter(
+    ['BLOCK_ID', 'AUST_COLLATERALISED', 'UST_VALUE_COLLATERALISED'],
+    axis=1,
+)
+collateral_fee_events_df['Source'] = 'Mirror'
+collateral_fee_events_df['Destination'] = 'Void'
+collateral_fee_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Collateral Withdraw Events: ', collateral_fee_events_df)
+
+
+liquidation_events_df = aust_liquidated.filter(
+    ['BLOCK_ID', 'AUST_COLLATERALISED', 'UST_VALUE_COLLATERALISED'],
+    axis=1,
+)
+liquidation_events_df['Source'] = 'Mirror'
+liquidation_events_df['Destination'] = 'Void'
+liquidation_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Liquidation Events: ', liquidation_events_df)
+
+
+liquidation_transfer_events_df = aust_transferred_back.filter(
+    ['BLOCK_ID', 'AUST_TRANSFERRED_BACK', 'UST_VALUE_TRANSFERRED'],
+    axis=1,
+)
+liquidation_transfer_events_df['Source'] = 'Mirror'
+liquidation_transfer_events_df['Destination'] = 'Wallet'
+liquidation_transfer_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Liquidation Transfer Backs: ', liquidation_transfer_events_df)
+
+
+transfer_in_df = user_transfers_received_df.filter(
+    ['BLOCK_ID', 'AUST_TRANSFERRED', 'UST_TRANSFERRED'],
+    axis=1
+)
+transfer_in_df['Source'] = 'Void'
+transfer_in_df['Destination'] = 'Wallet'
+transfer_in_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Transfers In: ', transfer_in_df)
+
+transfer_out_df = user_transfers_sent_df.filter(
+    ['BLOCK_ID', 'AUST_TRANSFERRED', 'UST_TRANSFERRED'],
+    axis=1
+)
+transfer_out_df['Source'] = 'Wallet'
+transfer_out_df['Destination'] = 'Void'
+transfer_out_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
+st.write('Transfers Out: ', transfer_out_df)
+
+
+all_events_df = pd.concat(
+    [
+        deposit_events_df,
+        redemption_events_df,
+        collateral_deposit_events_df,
+        collateral_withdraw_events_df,
+        collateral_fee_events_df,
+        liquidation_events_df,
+        liquidation_transfer_events_df,
+        transfer_in_df,
+        transfer_out_df
+    ]
+)
+all_events_df.set_index('BLOCK_ID')
+st.write('All events: ', all_events_df)
+
