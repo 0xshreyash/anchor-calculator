@@ -1,7 +1,6 @@
 # This script implements a version of the Anchor Calculator.
 import pandas as pd
 import streamlit as st
-
 # from streamlit import caching
 # caching.clear_cache()
 
@@ -326,6 +325,7 @@ def mirror_collateral_withdrawn(user_address, aust_price_df):
 
     return user_collateral_withdraws_df, aust_lost_to_fees, aust_liquidated, user_liq_aust_transfer_back_df
 
+
 aust_price_df = show_aust_value_table()
 user_address = show_user_picker()
 user_deposits_df = show_user_deposits(user_address)
@@ -365,6 +365,7 @@ st.write('Total UST value of aUST Holdings: ', total_aust_holding_value_ust)
 total_ust_deposited = user_deposits_df['DEPOSIT_AMOUNT_UST'].sum(axis=0)
 total_ust_transferred_in = user_transfers_received_df['UST_TRANSFERRED'].sum(axis=0)
 total_ust_deposited += total_ust_transferred_in
+st.write('Total UST deposited: ', total_ust_deposited)
 
 
 total_ust_redeemed = user_redemptions_df['UST_REDEEMED'].sum(axis=0)
@@ -374,6 +375,9 @@ total_ust_liquidated = aust_liquidated['UST_VALUE_COLLATERALISED'].sum(axis=0)
 
 total_ust_redeemed += total_ust_value_transferred_out
 total_ust_redeemed += total_ust_paid_in_fees
+total_ust_redeemed += total_ust_liquidated
+
+st.write('Total UST redeemed: ', total_ust_redeemed)
 
 interest_earned = total_aust_holding_value_ust - total_ust_deposited + total_ust_redeemed
 st.write('Total Interest Earned: ', interest_earned)
