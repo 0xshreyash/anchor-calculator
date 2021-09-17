@@ -417,18 +417,106 @@ st.write('Total UST lost: ', ust_lost)
 #######################################################################################################
 
 
+def compute_interest_from_all_events(all_events_df, aust_price_df):
+    all_events_df = find_closest_aust_pair(
+        aust_price_df=aust_price_df,
+        other_df=all_events_df
+    )
+
+    # This is what a row of all_events_df will look like when we iterate through it:
+    # {
+    #     "Index":2 (this item becomes row[0])
+    #     "BLOCK_ID":2371646 (this item becomes row[1])
+    #     "AUST_AMOUNT":268.207249 [row[2]]
+    #     "UST_AMOUNT":270.11108
+    #     "Source":"Wallet"
+    #     "Destination":"Void"
+    #     "AVERAGED_AUST_VALUE":1.007100242778027
+    #     "DEPOSIT_AUST_VALUE":1.007100243293792
+    #     "REDEMPTION_AUST_VALUE":1.007100242262261
+    #     "VALUE_DIFFERENCE":1.031530860728935e-9
+    # }
+
+    aust_unredeemed_list = []
+    redeemed_interest_list = []
+    unredeemed_interest_list = []
+    block_ids = []
+
+    avg_aust_value_at_deposit = 0
+    total_aust_held = 0
+
+    for row in all_events_df.itertuples(index=True, name='Pandas'):
+        # The 4th and the 5th indices correspond to the source and destination of funds.
+        if row[4] == 'Void' and row[5] == 'Wallet':
+            # Calculate unredeemed interest at the time the deposit happened
+            # row[6] is the current value of aUST
+            current_unredeemed_interest = total_aust_held * (row[6] - avg_aust_value_at_deposit)
+            # Calculate a weighted average of the aust currently held and aust deposited in the current block
+            avg_aust_value_at_deposit = \
+                (avg_aust_value_at_deposit * total_aust_held + row[6] * row[2]) / \
+                (total_aust_held + row[2])
+            # row[2] is the amount of aUST minted
+            total_aust_held = total_aust_held + row[2]
+
+            block_ids.append(row[1])
+
+            aust_unredeemed_list.append(total_aust_held)
+            # No interest is redeeemd when a deposit happens so add 0
+            redeemed_interest_list.append(0)
+            # Add the current_unredeemed_interest to the unredeemed_interest_list
+            unredeemed_interest_list.append(current_unredeemed_interest)
+
+        elif row[4] == 'Wallet' and row[5] == 'Void':
+
+            current_unredeemed_interest = total_aust_held * (row[6] - avg_aust_value_at_deposit)
+            # Amount of aUST redeemed
+            redeemed_amount = row[2]
+            # Value of 1 aUST in UST
+            current_aust_value = row[6]
+            # Calculate how much interest was redeemed
+            interest_redeemed = redeemed_amount * (current_aust_value - avg_aust_value_at_deposit)
+            # Remove the aUST redeemed from the amount of aUST held
+            total_aust_held -= redeemed_amount
+
+            block_ids.append(row[1])
+            aust_unredeemed_list.append(total_aust_held)
+            redeemed_interest_list.append(interest_redeemed)
+            # Calculate the total unredeemed interest at the start of the block and subtract
+            unredeemed_interest_list.append(current_unredeemed_interest - interest_redeemed)
+        elif row[4] == 'Wallet' and row[5] == 'Mirror':
+            # No need to do this calculation
+            pass
+        elif row[4] == 'Mirror' and row[5] == 'Wallet':
+            # No need to do this calculation
+            pass
+        elif row[4] == 'Mirror' and row[5] == 'Void':
+            current_unredeemed_interest = total_aust_held * (row[6] - avg_aust_value_at_deposit)
+            redeemed_amount = row[2]
+            current_aust_value = row[6]
+            interest_redeemed = redeemed_amount * (current_aust_value - avg_aust_value_at_deposit)
+            total_aust_held -= redeemed_amount
+
+            block_ids.append(row[1])
+            aust_unredeemed_list.append(total_aust_held)
+            redeemed_interest_list.append(interest_redeemed)
+            unredeemed_interest_list.append(current_unredeemed_interest - interest_redeemed)
+        else:
+            st.write('THIS SHOULD NOT HAPPEN, CHECK THE CODE FOR CORRECTNESS')
+    return block_ids, aust_unredeemed_list, redeemed_interest_list, unredeemed_interest_list, avg_aust_value_at_deposit
+
+
 deposit_events_df = user_deposits_df.filter(['BLOCK_ID', 'MINT_AMOUNT_AUST', 'DEPOSIT_AMOUNT_UST'], axis=1)
 deposit_events_df['Source'] = 'Void'
 deposit_events_df['Destination'] = 'Wallet'
 deposit_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Deposit Events: ', deposit_events_df)
+# st.write('Deposit Events: ', deposit_events_df)
 
 
 redemption_events_df = user_redemptions_df.filter(['BLOCK_ID', 'AUST_BURNT', 'UST_REDEEMED'], axis=1)
 redemption_events_df['Source'] = 'Wallet'
 redemption_events_df['Destination'] = 'Void'
 redemption_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Redemption Events: ', redemption_events_df)
+# st.write('Redemption Events: ', redemption_events_df)
 
 
 collateral_deposit_events_df = user_collateral_deposits_df.filter(
@@ -438,7 +526,7 @@ collateral_deposit_events_df = user_collateral_deposits_df.filter(
 collateral_deposit_events_df['Source'] = 'Wallet'
 collateral_deposit_events_df['Destination'] = 'Mirror'
 collateral_deposit_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Collateral Deposit Events: ', collateral_deposit_events_df)
+# st.write('Collateral Deposit Events: ', collateral_deposit_events_df)
 
 
 collateral_withdraw_events_df = user_collateral_withdraws_df.filter(
@@ -448,7 +536,7 @@ collateral_withdraw_events_df = user_collateral_withdraws_df.filter(
 collateral_withdraw_events_df['Source'] = 'Mirror'
 collateral_withdraw_events_df['Destination'] = 'Wallet'
 collateral_withdraw_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Collateral Withdraw Events: ', collateral_withdraw_events_df)
+# st.write('Collateral Withdraw Events: ', collateral_withdraw_events_df)
 
 
 collateral_fee_events_df = aust_lost_to_fees.filter(
@@ -458,7 +546,7 @@ collateral_fee_events_df = aust_lost_to_fees.filter(
 collateral_fee_events_df['Source'] = 'Mirror'
 collateral_fee_events_df['Destination'] = 'Void'
 collateral_fee_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Collateral Withdraw Events: ', collateral_fee_events_df)
+# st.write('Collateral Withdraw Events: ', collateral_fee_events_df)
 
 
 liquidation_events_df = aust_liquidated.filter(
@@ -468,7 +556,7 @@ liquidation_events_df = aust_liquidated.filter(
 liquidation_events_df['Source'] = 'Mirror'
 liquidation_events_df['Destination'] = 'Void'
 liquidation_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Liquidation Events: ', liquidation_events_df)
+# st.write('Liquidation Events: ', liquidation_events_df)
 
 
 liquidation_transfer_events_df = aust_transferred_back.filter(
@@ -478,7 +566,7 @@ liquidation_transfer_events_df = aust_transferred_back.filter(
 liquidation_transfer_events_df['Source'] = 'Mirror'
 liquidation_transfer_events_df['Destination'] = 'Wallet'
 liquidation_transfer_events_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Liquidation Transfer Backs: ', liquidation_transfer_events_df)
+# st.write('Liquidation Transfer Backs: ', liquidation_transfer_events_df)
 
 
 transfer_in_df = user_transfers_received_df.filter(
@@ -488,7 +576,7 @@ transfer_in_df = user_transfers_received_df.filter(
 transfer_in_df['Source'] = 'Void'
 transfer_in_df['Destination'] = 'Wallet'
 transfer_in_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Transfers In: ', transfer_in_df)
+# st.write('Transfers In: ', transfer_in_df)
 
 transfer_out_df = user_transfers_sent_df.filter(
     ['BLOCK_ID', 'AUST_TRANSFERRED', 'UST_TRANSFERRED'],
@@ -497,7 +585,7 @@ transfer_out_df = user_transfers_sent_df.filter(
 transfer_out_df['Source'] = 'Wallet'
 transfer_out_df['Destination'] = 'Void'
 transfer_out_df.columns = ['BLOCK_ID', 'AUST_AMOUNT', 'UST_AMOUNT', 'Source', 'Destination']
-st.write('Transfers Out: ', transfer_out_df)
+# st.write('Transfers Out: ', transfer_out_df)
 
 
 all_events_df = pd.concat(
@@ -513,6 +601,52 @@ all_events_df = pd.concat(
         transfer_out_df
     ]
 )
-all_events_df.set_index('BLOCK_ID')
+all_events_df = all_events_df.sort_values(by=['BLOCK_ID'])
+all_events_df.set_index('BLOCK_ID', inplace=True)
 st.write('All events: ', all_events_df)
+block_ids, aust_unredeemed, redeemed_interest, unredeemed_interest, avg_aust_value_at_deposit = \
+    compute_interest_from_all_events(all_events_df, aust_price_df)
+
+current_block = aust_price_df['BLOCK_ID'].max()
+# Add the values of things at the current block
+block_ids.append(current_block)
+# aust unredeemed and redeemed interest stay the same
+aust_unredeemed.append(aust_unredeemed[-1])
+redeemed_interest.append(redeemed_interest[-1])
+# unredeemed interest increases because the current value of aUST has increase
+unredeemed_interest.append(aust_unredeemed[-1] * (current_aust_price - avg_aust_value_at_deposit))
+
+
+aust_held_df = pd.DataFrame({
+    'block_id': block_ids,
+    'aust_unredeemed': aust_unredeemed,
+}).set_index('block_id')
+
+redeemed_interest = pd.DataFrame({
+    'block_id': block_ids,
+    'redeemed_interest': redeemed_interest,
+}).set_index('block_id')
+
+total_redeemed_interest = redeemed_interest.cumsum()
+
+
+unredeemed_interest_df = pd.DataFrame({
+    'block_id': block_ids,
+    'interest_unredeemed': unredeemed_interest
+}).set_index('block_id')
+
+total_interest_df = pd.DataFrame({
+    'block_id': block_ids,
+    'total_interest_earned': list(
+        total_redeemed_interest['redeemed_interest'].add(unredeemed_interest_df['interest_unredeemed'])
+    )
+}).set_index('block_id')
+
+
+st.area_chart(aust_held_df)
+st.area_chart(total_interest_df)
+
+
+
+
 
