@@ -326,6 +326,7 @@ def mirror_collateral_withdrawn(user_address, aust_price_df):
         aust_value_col='AVERAGED_AUST_VALUE',
         total_ust_value_col='UST_VALUE_COLLATERALISED'
     )
+    st.write('Liquidations: ', aust_liquidated)
     total_aust_liquidated = aust_liquidated['AUST_COLLATERALISED'].sum(axis=0)
     st.write('aUST lost to liquidations:', total_aust_liquidated)
     total_ust_liquidated = \
